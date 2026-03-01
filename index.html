@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Srinagar Pro - Multi-Device</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        :root { 
+            --accent: #27ae60; 
+            --glass: rgba(255, 255, 255, 0.95);
+            --dark: #2c3e50;
+        }
+        
+        body, html { margin: 0; padding: 0; height: 100%; width: 100%; font-family: system-ui, -apple-system, sans-serif; background: #f0f2f5; overflow: hidden; }
+        
+        #map { height: 100%; width: 100%; position: absolute; z-index: 1; }
+
+        /* RESPONSIVE TOP PANEL */
+        .ui-panel { 
+            position: absolute; top: 10px; left: 10px; right: 10px; z-index: 1000; 
+            background: var(--glass); padding: 8px 12px; border-radius: 12px; 
+            display: flex; align-items: center; justify-content: space-between; gap: 8px;
+            backdrop-filter: blur(10px); box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+
+        /* RESPONSIVE LOGS - Collapses on small screens */
+        #logConsole { 
+            position: absolute; bottom: 20px; left: 20px; z-index: 1001; 
+            width: 320px; height: 150px; background: rgba(30, 39, 46, 0.95); 
+            color: #00ff88; font-family: 'Consolas', monospace;
+            font-size: 10px; padding: 12px; border-radius: 12px; 
+            overflow-y: auto; pointer-events: auto;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+            transition: 0.3s;
+        }
+
+        /* RESPONSIVE DETAILS CARD (Bottom Drawer for Mobile) */
+        #detailsCard { 
+            position: absolute; bottom: 0; left: 0; right: 0; z-index: 1002; 
+            background: white; padding: 20px; border-radius: 20px 20px 0 0; 
+            display: none; box-shadow: 0 -5px 25px rgba(0,0,0,0.15);
+            animation: slideUp 0.3s ease-out;
+            max-width: 100%;
+        }
+
+        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+
+        .btn { 
+            padding: 8px 12px; border: none; background: #eee; 
+            color: var(--dark); border-radius: 8px; cursor: pointer; font-size: 11px; 
+            font-weight: 700; flex: 1; max-width: 120px; text-align: center;
+        }
+        .btn.active { background: var(--accent); color: white; }
+
+        .speed-badge { background: #f1f2f6; padding: 10px; border-radius: 12px; text-align: center; min-width: 60px; }
+
+        /* TABLET & DESKTOP ADJUSTMENTS */
+        @media (min-width: 768px) {
+            .ui-panel { width: fit-content; right: auto; padding: 10px 20px; }
+            #detailsCard { 
+                bottom: 20px; right: 20px; left: auto; 
+                width: 350px; border-radius: 20px; 
+            }
+            #logConsole { height: 200px; width: 350px; }
+        }
+
+        /* HIDE LOGS ON VERY SMALL SCREENS TO SAVE SPACE */
+        @media (max-width: 480px) {
+            #logConsole { width: calc(100% - 40px); height: 100px; bottom: 10px; left: 20px; font-size: 9px; opacity: 0.8; }
+            #detailsCard { padding: 15px; }
+            .btn { font-size: 10px; padding: 6px; }
+        }
+
+        .bus-label { 
+            background: white; color: #222; font-size: 9px; padding: 2px 6px; 
+            border-radius: 10px; border: 1.5px solid var(--accent); font-weight: 800;
+        }
+        .close-drawer { width: 40px; height: 5px; background: #ddd; border-radius: 10px; margin: -10px auto 10px; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <div class="ui-panel">
+        <button id="toggleBtn" class="btn">START FEED</button>
+        <button id="trafficBtn" class="btn">TRAFFIC</button>
+        <div id="status" style="font-size: 10px; font-weight: bold; color: var(--dark);">📡 OFFLINE</div>
+    </div>
+
+    <div id="logConsole">
+        <div>Radar Ready.</div>
+    </div>
+
+    <div id="detailsCard">
+        <div class="close-drawer" onclick="document.getElementById('detailsCard').style.display='none'"></div>
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <div class="speed-badge">
+                <span id="speedVal" style="font-size: 24px; font-weight: 800; color: var(--accent);">0</span>
+                <div style="font-size: 8px; color: #999;">KM/H</div>
+            </div>
+            <div style="flex: 1;">
+                <div id="routeTitle" style="font-weight: 800; font-size: 18px; color: var(--dark);">---</div>
+                <div id="busIdTxt" style="font-size: 10px; color: #7f8c8d;">ID: ---</div>
+            </div>
+        </div>
+        <div style="margin-top: 15px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 12px; border-top: 1px solid #eee; padding-top: 10px;">
+            <div><small style="color:#bdc3c7;">FROM</small><br><b id="fromLoc">---</b></div>
+            <div><small style="color:#bdc3c7;">TO</small><br><b id="toLoc">---</b></div>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const map = L.map('map', { zoomControl: false }).setView([34.0837, 74.7973], 13);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(map);
+
+        const trafficLayer = L.tileLayer('https://{s}.google.com/vt/lyrs=m,traffic&x={x}&y={y}&z={z}', {
+            subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
+        });
+
+        let busRegistry = {};
+        let liveInterval = null;
+        let trackingId = null;
+
+        function addLog(msg, isMove = false) {
+            const console = document.getElementById('logConsole');
+            const entry = document.createElement('div');
+            entry.style.marginBottom = "2px";
+            if(isMove) entry.style.color = "#f1c40f";
+            entry.innerText = `> ${msg}`;
+            console.appendChild(entry);
+            console.scrollTop = console.scrollHeight;
+            if (console.children.length > 30) console.removeChild(console.firstChild);
+        }
+
+        function getSpeed(prev, curr) {
+            const R = 6371e3;
+            const dLat = (curr.lat - prev.lat) * Math.PI / 180;
+            const dLon = (curr.lng - prev.lng) * Math.PI / 180;
+            const a = Math.sin(dLat/2)**2 + Math.cos(prev.lat*Math.PI/180)*Math.cos(curr.lat*Math.PI/180)*Math.sin(dLon/2)**2;
+            const d = R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
+            const t = (curr.t - prev.t) / 1000;
+            return t > 0 ? Math.round((d / t) * 3.6) : 0;
+        }
+
+        document.getElementById('trafficBtn').onclick = function() {
+            if (map.hasLayer(trafficLayer)) {
+                map.removeLayer(trafficLayer); this.classList.remove('active');
+            } else {
+                trafficLayer.addTo(map); this.classList.add('active');
+            }
+        };
+
+        document.getElementById('toggleBtn').onclick = function() {
+            if (liveInterval) {
+                clearInterval(liveInterval); liveInterval = null;
+                this.innerText = "START FEED"; this.classList.remove('active');
+                document.getElementById('status').innerText = "📡 PAUSED";
+            } else {
+                liveInterval = setInterval(updateBuses, 100);
+                this.innerText = "STOP FEED"; this.classList.add('active');
+                addLog("100ms Feed Started");
+            }
+        };
+
+        async function updateBuses() {
+            try {
+                const res = await fetch('https://chalo.com/app/api/nearbybus/v2/city/SRINAGAR', {
+                    method: 'POST', cache: 'no-store',
+                    headers: { 'Content-Type': 'application/json', 'X-Type': 'pass' },
+                    body: JSON.stringify({ "metaData": {"source": "web"}, "requiredFields": { "nearbyBuses": {"lat": "34.08", "lng": "74.80", "radius": "100000.0"}, "cardsInfo": {} } })
+                });
+                const data = await res.json();
+                document.getElementById('status').innerText = `📡 LIVE: ${data.buses.length}`;
+
+                data.buses.forEach(bus => {
+                    const id = bus.session._vehicleId;
+                    const pos = { lat: bus.parameters.lat, lng: bus.parameters.lon, t: Date.now() };
+
+                    if (busRegistry[id]) {
+                        const old = busRegistry[id].lastPos;
+                        if (old.lat !== pos.lat || old.lng !== pos.lng) {
+                            const spd = getSpeed(old, pos);
+                            if (spd > 0 && spd < 110) {
+                                busRegistry[id].speed = spd;
+                                addLog(`Bus ${id} moving with ${spd}km/h`, true);
+                            }
+                            busRegistry[id].lastPos = pos;
+                            busRegistry[id].marker.setLatLng([pos.lat, pos.lng]);
+                            if (id === trackingId) {
+                                document.getElementById('speedVal').innerText = busRegistry[id].speed;
+                                map.panTo([pos.lat, pos.lng]);
+                            }
+                        }
+                    } else {
+                        const iconHtml = `<div style="text-align:center;"><div style="font-size:22px;">🚌</div><div class="bus-label">${bus.session._routeName}</div></div>`;
+                        const marker = L.marker([pos.lat, pos.lng], { icon: L.divIcon({ html: iconHtml, className: 'b', iconSize: [40, 40] }) }).addTo(map);
+                        
+                        marker.on('click', () => {
+                            trackingId = id;
+                            document.getElementById('routeTitle').innerText = bus.session._routeName;
+                            document.getElementById('fromLoc').innerText = bus.session._fromName;
+                            document.getElementById('toLoc').innerText = bus.session._toName;
+                            document.getElementById('busIdTxt').innerText = `ID: ${id}`;
+                            document.getElementById('detailsCard').style.display = 'block';
+                            map.flyTo([pos.lat, pos.lng], 16);
+                        });
+                        busRegistry[id] = { marker, lastPos: pos, speed: 0 };
+                    }
+                });
+            } catch (e) { }
+        }
+    </script>
+</body>
+</html>
